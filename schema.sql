@@ -7,7 +7,10 @@ CREATE TABLE IF NOT EXISTS players (
     password VARCHAR(255) NOT NULL,
     x INT DEFAULT 0,
     y INT DEFAULT 0,
-    z INT DEFAULT 0
+    z INT DEFAULT 0,
+    hp INT DEFAULT 10,
+    max_hp INT DEFAULT 10,
+    inventory TEXT DEFAULT '[]'
 );
 
 CREATE TABLE IF NOT EXISTS levels (

@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"log"
 	"net"
@@ -39,6 +40,9 @@ func main() {
 	}
 	defer db.Close()
 
+	// Ensure DB applies schema updates natively
+	db.Exec("ALTER TABLE players ADD COLUMN inventory TEXT DEFAULT '[]'")
+
 	world := game.NewWorld(db)
 	var mu sync.Mutex
 
@@ -56,6 +60,9 @@ func main() {
 		for range ticker.C {
 			mu.Lock()
 			game.ProcessCommands(world)
+			game.SpawnSystem(world)  // <--- ADD THIS LINE
+			game.AISystem(world)
+			game.ProcessCombat(world)
 			game.RenderViewport(world)
 			mu.Unlock()
 		}
@@ -63,7 +70,7 @@ func main() {
 
 	// 6. Start listening for Telnet connections
 	listener, _ := net.Listen("tcp", ":2323")
-	log.Println("Secure Server running on port 2323...")
+	log.Println("VeggieMUD Secure Server running on port 2323...")
 
 	for {
 		conn, _ := listener.Accept()
@@ -72,7 +79,7 @@ func main() {
 }
 
 func handleConnection(conn net.Conn, w *game.World, mu *sync.Mutex) {
-	conn.Write([]byte("Welcome! Enter username (or type 'new' to register):\r\n> "))
+	conn.Write([]byte("Welcome to VeggieMUD! Enter username (or type 'new' to register):\r\n> "))
 	scanner := bufio.NewScanner(conn)
 	
 	state := "AWAITING_NAME"
@@ -86,14 +93,24 @@ func handleConnection(conn net.Conn, w *game.World, mu *sync.Mutex) {
 		mu.Lock()
 		if state == "PLAYING" {
 			if pPos, ok := w.Positions[playerEntity]; ok {
-				// Save position to database
-				w.DB.Exec("UPDATE players SET x=?, y=?, z=? WHERE id=?", pPos.X, pPos.Y, pPos.Z, w.Players[playerEntity].DB_ID)
+				// Safely check for stats before saving
+				if stats, hasStats := w.Stats[playerEntity]; hasStats {
+					invJSON, _ := json.Marshal(w.Inventories[playerEntity].Items)
+					w.DB.Exec("UPDATE players SET x=?, y=?, z=?, hp=?, max_hp=?, inventory=? WHERE id=?", pPos.X, pPos.Y, pPos.Z, stats.HP, stats.MaxHP, string(invJSON), w.Players[playerEntity].DB_ID)
+				} else {
+					// Fallback just in case stats didn't load
+					w.DB.Exec("UPDATE players SET x=?, y=?, z=? WHERE id=?", pPos.X, pPos.Y, pPos.Z, w.Players[playerEntity].DB_ID)
+				}
 				log.Printf("Auto-saved player %s at %d,%d,%d", username, pPos.X, pPos.Y, pPos.Z)
 			}
-			// Clean up ECS so they disappear from the game map immediately
+			
+			// Clean up all ECS components so the server doesn't leak memory
 			delete(w.Players, playerEntity)
 			delete(w.Positions, playerEntity)
 			delete(w.Renderables, playerEntity)
+			delete(w.Stats, playerEntity)
+			delete(w.Combat, playerEntity)
+			delete(w.Inventories, playerEntity)
 		}
 		mu.Unlock() 
 		conn.Close() // Close connection after unlocking
@@ -128,6 +145,7 @@ func handleConnection(conn net.Conn, w *game.World, mu *sync.Mutex) {
 				break
 			}
 
+			// We don't need to insert HP here because our database defaults new players to 10 HP
 			_, err = w.DB.Exec("INSERT INTO players (username, password) VALUES (?, ?)", username, string(hashedBytes))
 			if err != nil {
 				conn.Write([]byte("Name taken or DB error. Try again:\r\n> "))
@@ -138,46 +156,54 @@ func handleConnection(conn net.Conn, w *game.World, mu *sync.Mutex) {
 			}
 
 		case "AWAITING_PASS":
-			var id, x, y, z int
-			var storedHash string
+			var id, x, y, z, hp, max_hp int
+			var storedHash, invJSON string
 			
-			err := w.DB.QueryRow("SELECT id, password, x, y, z FROM players WHERE username=?", username).Scan(&id, &storedHash, &x, &y, &z)
+			// Fetch the stored hash, position, and health
+			err := w.DB.QueryRow("SELECT id, password, x, y, z, hp, max_hp, COALESCE(inventory, '[]') FROM players WHERE username=?", username).Scan(&id, &storedHash, &x, &y, &z, &hp, &max_hp, &invJSON)
 			
 			if err != nil {
 				conn.Write([]byte("User not found. Enter username:\r\n> "))
 				state = "AWAITING_NAME"
 			} else {
+				// Compare the provided password against the stored bcrypt hash
 				err = bcrypt.CompareHashAndPassword([]byte(storedHash), []byte(input))
 				if err != nil {
 					conn.Write([]byte("Incorrect password. Enter username:\r\n> "))
 					state = "AWAITING_NAME"
 				} else {
-					// The Wall Spawn Fix
+					// The Wall Spawn Fix: If they are at 0,0, move them to safety
 					if x == 0 && y == 0 {
 						x, y = game.FindSafeSpawn(w, z)
-						w.DB.Exec("UPDATE players SET x=?, y=? WHERE id=?", x, y, id)
+						w.DB.Exec("UPDATE players SET x=?, y=?, hp=?, max_hp=? WHERE id=?", x, y, hp, max_hp, id)
 					}
 
+					// Login Success! Create all ECS Entities
 					playerEntity = w.CreateEntity()
 					w.Positions[playerEntity] = &game.Position{X: x, Y: y, Z: z}
 					w.Renderables[playerEntity] = &game.Renderable{Char: '@'}
-					w.Players[playerEntity] = &game.PlayerControl{Conn: conn, Name: username, DB_ID: id}
+					w.Players[playerEntity] = &game.PlayerControl{Conn: conn, Name: username, DB_ID: id, LogMsg: "Welcome to the depths..."}
+					
+					// Assign Combat and Inventory components
+					w.Stats[playerEntity] = &game.CombatStats{HP: hp, MaxHP: max_hp, Attack: 3, Defense: 1}
+					w.Combat[playerEntity] = &game.CombatState{}
+					w.Inventories[playerEntity] = &game.Inventory{Items: []string{}}
+					json.Unmarshal([]byte(invJSON), &w.Inventories[playerEntity].Items)
 					
 					state = "PLAYING"
 					
-					// \033[2J clears the whole screen
-					// \033[15;1H moves the prompt safely below the map
+					// Clear screen and lock prompt safely below the map
 					welcome := fmt.Sprintf("\033[2J\033[15;1HWelcome back, %s!\r\n> ", username)
 					conn.Write([]byte(welcome))
 				}
 			}
 
 		case "PLAYING":
+			// Route the command directly to the player's component
 			if p, ok := w.Players[playerEntity]; ok {
 				p.NextCmd = input
 				
-				// \033[15;1H moves cursor below the map
-				// \033[J clears everything from the cursor down to the bottom of the screen
+				// Reset the cursor below the map, clear old text, and reprint prompt
 				response := fmt.Sprintf("\033[15;1H\033[JAction: %s\r\n> ", input)
 				conn.Write([]byte(response))
 			}

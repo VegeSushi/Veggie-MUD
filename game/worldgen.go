@@ -8,17 +8,16 @@ import (
 	"time"
 )
 
-const LevelWidth = 50
-const LevelHeight = 50
+const LevelWidth = 25
+const LevelHeight = 25
 
 func init() {
 	rand.Seed(time.Now().UnixNano())
 }
 
-// GetOrGenerateLevel checks if a Z-level is in memory, then DB, or generates it.
 func GetOrGenerateLevel(w *World, z int) {
 	if _, exists := w.Levels[z]; exists {
-		return // Already loaded
+		return
 	}
 
 	w.Levels[z] = make(map[string]rune)
@@ -28,10 +27,19 @@ func GetOrGenerateLevel(w *World, z int) {
 	if err == sql.ErrNoRows {
 		mapData = generateCavern()
 		w.DB.Exec("INSERT INTO levels (z, map_data) VALUES (?, ?)", z, mapData)
-	}
 
-	// Load map data into memory (only store non-floor tiles to save RAM)
-	lines := strings.Split(mapData, "\n")
+		// Load into memory first
+		loadMapIntoMemory(w, z, mapData)
+
+		// NEW: Populate the level with initial Goblins and Chests
+		PopulateLevel(w, z)
+	} else {
+		loadMapIntoMemory(w, z, mapData)
+	}
+}
+
+func loadMapIntoMemory(w *World, z int, data string) {
+	lines := strings.Split(data, "\n")
 	for y, row := range lines {
 		for x, char := range row {
 			if char != '.' {
@@ -41,11 +49,25 @@ func GetOrGenerateLevel(w *World, z int) {
 	}
 }
 
-// generateCavern uses Cellular Automata to make organic caves
+func PopulateLevel(w *World, z int) {
+	// Spawn 3 initial Chests
+	for i := 0; i < 3; i++ {
+		x, y := FindSafeSpawn(w, z)
+		entity := w.CreateEntity()
+		w.Positions[entity] = &Position{X: x, Y: y, Z: z}
+		w.Renderables[entity] = &Renderable{Char: 'C'}
+		w.Loot[entity] = &Loot{Items: []string{RandomLoot()}}
+	}
+	// Goblins will be handled by the SpawnSystem in the main loop
+}
+
+func RandomLoot() string {
+	items := []string{"Bronze Sword", "Iron Helm", "Cabbage", "Gold Coin", "Bread"}
+	return items[rand.Intn(len(items))]
+}
+
 func generateCavern() string {
 	grid := make([][]rune, LevelHeight)
-	
-	// 1. Scatter random noise
 	for y := 0; y < LevelHeight; y++ {
 		grid[y] = make([]rune, LevelWidth)
 		for x := 0; x < LevelWidth; x++ {
@@ -57,7 +79,6 @@ func generateCavern() string {
 		}
 	}
 
-	// 2. Smooth the noise (Cellular Automata)
 	for i := 0; i < 4; i++ {
 		newGrid := make([][]rune, LevelHeight)
 		for y := 0; y < LevelHeight; y++ {
@@ -73,11 +94,15 @@ func generateCavern() string {
 		grid = newGrid
 	}
 
-	// 3. Add solid borders
-	for y := 0; y < LevelHeight; y++ { grid[y][0] = '#'; grid[y][LevelWidth-1] = '#' }
-	for x := 0; x < LevelWidth; x++ { grid[0][x] = '#'; grid[LevelHeight-1][x] = '#' }
-	
-	// 4. Place one Down-Staircase (>)
+	for y := 0; y < LevelHeight; y++ {
+		grid[y][0] = '#'
+		grid[y][LevelWidth-1] = '#'
+	}
+	for x := 0; x < LevelWidth; x++ {
+		grid[0][x] = '#'
+		grid[LevelHeight-1][x] = '#'
+	}
+
 	for {
 		sx, sy := rand.Intn(LevelWidth-2)+1, rand.Intn(LevelHeight-2)+1
 		if grid[sy][sx] == '.' {
@@ -86,7 +111,6 @@ func generateCavern() string {
 		}
 	}
 
-	// Convert grid to a flat string for database storage
 	var sb strings.Builder
 	for y := 0; y < LevelHeight; y++ {
 		sb.WriteString(string(grid[y]))
@@ -99,10 +123,10 @@ func generateCavern() string {
 
 func countWalls(grid [][]rune, cx, cy int) int {
 	count := 0
-	for y := cy - 1; y <= cy + 1; y++ {
-		for x := cx - 1; x <= cx + 1; x++ {
+	for y := cy - 1; y <= cy+1; y++ {
+		for x := cx - 1; x <= cx+1; x++ {
 			if x < 0 || x >= LevelWidth || y < 0 || y >= LevelHeight {
-				count++ // Out of bounds counts as a wall
+				count++
 			} else if grid[y][x] == '#' {
 				count++
 			}
