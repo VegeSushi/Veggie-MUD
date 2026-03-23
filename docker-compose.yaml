@@ -1,0 +1,22 @@
+version: '3.8'
+
+services:
+  mariadb:
+    image: mariadb:10.11
+    container_name: roguelite_db
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      MARIADB_USER: ${DB_USER}
+      MARIADB_PASSWORD: ${DB_PASSWORD}
+      MARIADB_DATABASE: ${DB_NAME}
+      MARIADB_ROOT_PASSWORD: root_super_secret
+    ports:
+      - "${DB_PORT}:3306"
+    volumes:
+      - mariadb_data:/var/lib/mysql
+      - ./schema.sql:/docker-entrypoint-initdb.d/schema.sql 
+
+volumes:
+  mariadb_data:
