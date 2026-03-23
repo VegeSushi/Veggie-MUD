@@ -10,7 +10,9 @@ CREATE TABLE IF NOT EXISTS players (
     z INT DEFAULT 0,
     hp INT DEFAULT 10,
     max_hp INT DEFAULT 10,
-    inventory TEXT DEFAULT '[]'
+    inventory TEXT DEFAULT '[]',
+    weapon VARCHAR(255) DEFAULT '',
+    armor VARCHAR(255) DEFAULT ''
 );
 
 CREATE TABLE IF NOT EXISTS levels (

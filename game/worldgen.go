@@ -62,7 +62,7 @@ func PopulateLevel(w *World, z int) {
 }
 
 func RandomLoot() string {
-	items := []string{"Bronze Sword", "Iron Helm", "Cabbage", "Gold Coin", "Bread"}
+	items := []string{"Healing Potion", "Dagger", "Shortsword", "Leather Armor"}
 	return items[rand.Intn(len(items))]
 }
 

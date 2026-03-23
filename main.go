@@ -42,6 +42,8 @@ func main() {
 
 	// Ensure DB applies schema updates natively
 	db.Exec("ALTER TABLE players ADD COLUMN inventory TEXT DEFAULT '[]'")
+	db.Exec("ALTER TABLE players ADD COLUMN weapon VARCHAR(255) DEFAULT ''")
+	db.Exec("ALTER TABLE players ADD COLUMN armor VARCHAR(255) DEFAULT ''")
 
 	world := game.NewWorld(db)
 	var mu sync.Mutex
@@ -69,8 +71,11 @@ func main() {
 	}()
 
 	// 6. Start listening for Telnet connections
-	listener, _ := net.Listen("tcp", ":2323")
-	log.Println("VeggieMUD Secure Server running on port 2323...")
+	listener, err := net.Listen("tcp", ":1337")
+	if err != nil {
+		log.Fatalf("Fatal error: could not listen on port 1337. Is the server already running? Error: %v", err)
+	}
+	log.Println("VeggieMUD Secure Server running on port 1337...")
 
 	for {
 		conn, _ := listener.Accept()
@@ -96,7 +101,8 @@ func handleConnection(conn net.Conn, w *game.World, mu *sync.Mutex) {
 				// Safely check for stats before saving
 				if stats, hasStats := w.Stats[playerEntity]; hasStats {
 					invJSON, _ := json.Marshal(w.Inventories[playerEntity].Items)
-					w.DB.Exec("UPDATE players SET x=?, y=?, z=?, hp=?, max_hp=?, inventory=? WHERE id=?", pPos.X, pPos.Y, pPos.Z, stats.HP, stats.MaxHP, string(invJSON), w.Players[playerEntity].DB_ID)
+					eq := w.Equipment[playerEntity]
+					w.DB.Exec("UPDATE players SET x=?, y=?, z=?, hp=?, max_hp=?, inventory=?, weapon=?, armor=? WHERE id=?", pPos.X, pPos.Y, pPos.Z, stats.HP, stats.MaxHP, string(invJSON), eq.Weapon, eq.Armor, w.Players[playerEntity].DB_ID)
 				} else {
 					// Fallback just in case stats didn't load
 					w.DB.Exec("UPDATE players SET x=?, y=?, z=? WHERE id=?", pPos.X, pPos.Y, pPos.Z, w.Players[playerEntity].DB_ID)
@@ -111,6 +117,7 @@ func handleConnection(conn net.Conn, w *game.World, mu *sync.Mutex) {
 			delete(w.Stats, playerEntity)
 			delete(w.Combat, playerEntity)
 			delete(w.Inventories, playerEntity)
+			delete(w.Equipment, playerEntity)
 		}
 		mu.Unlock() 
 		conn.Close() // Close connection after unlocking
@@ -157,10 +164,10 @@ func handleConnection(conn net.Conn, w *game.World, mu *sync.Mutex) {
 
 		case "AWAITING_PASS":
 			var id, x, y, z, hp, max_hp int
-			var storedHash, invJSON string
+			var storedHash, invJSON, weapon, armor string
 			
 			// Fetch the stored hash, position, and health
-			err := w.DB.QueryRow("SELECT id, password, x, y, z, hp, max_hp, COALESCE(inventory, '[]') FROM players WHERE username=?", username).Scan(&id, &storedHash, &x, &y, &z, &hp, &max_hp, &invJSON)
+			err := w.DB.QueryRow("SELECT id, password, x, y, z, hp, max_hp, COALESCE(inventory, '[]'), COALESCE(weapon, ''), COALESCE(armor, '') FROM players WHERE username=?", username).Scan(&id, &storedHash, &x, &y, &z, &hp, &max_hp, &invJSON, &weapon, &armor)
 			
 			if err != nil {
 				conn.Write([]byte("User not found. Enter username:\r\n> "))
@@ -189,6 +196,7 @@ func handleConnection(conn net.Conn, w *game.World, mu *sync.Mutex) {
 					w.Combat[playerEntity] = &game.CombatState{}
 					w.Inventories[playerEntity] = &game.Inventory{Items: []string{}}
 					json.Unmarshal([]byte(invJSON), &w.Inventories[playerEntity].Items)
+					w.Equipment[playerEntity] = &game.Equipment{Weapon: weapon, Armor: armor}
 					
 					state = "PLAYING"
 					

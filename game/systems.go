@@ -37,6 +37,77 @@ func ProcessCommands(w *World) {
 			}
 			continue
 		}
+		if strings.HasPrefix(cmd, "use ") {
+			parts := strings.SplitN(cmd, " ", 2)
+			idx, err := strconv.Atoi(parts[1])
+			inv := w.Inventories[entity]
+			if err != nil || idx < 0 || idx >= len(inv.Items) {
+				player.LogMsg = "Invalid item index."
+			} else {
+				itemName := inv.Items[idx]
+				if def, exists := ItemRegistry[itemName]; exists && def.Type == "consumable" {
+					stats := w.Stats[entity]
+					stats.HP += def.HealAmount
+					if stats.HP > stats.MaxHP { stats.HP = stats.MaxHP }
+					inv.Items = append(inv.Items[:idx], inv.Items[idx+1:]...)
+					player.LogMsg = fmt.Sprintf("You consumed %s and healed %d HP.", itemName, def.HealAmount)
+				} else {
+					player.LogMsg = "You can't use that."
+				}
+			}
+			continue
+		}
+
+		if strings.HasPrefix(cmd, "equip ") {
+			parts := strings.SplitN(cmd, " ", 2)
+			idx, err := strconv.Atoi(parts[1])
+			inv := w.Inventories[entity]
+			if err != nil || idx < 0 || idx >= len(inv.Items) {
+				player.LogMsg = "Invalid item index."
+			} else {
+				itemName := inv.Items[idx]
+				if def, exists := ItemRegistry[itemName]; exists {
+					eq := w.Equipment[entity]
+					var oldItem string
+					if def.Type == "weapon" {
+						oldItem = eq.Weapon
+						eq.Weapon = itemName
+					} else if def.Type == "armor" {
+						oldItem = eq.Armor
+						eq.Armor = itemName
+					} else {
+						player.LogMsg = "You can't equip that."
+						continue
+					}
+					inv.Items = append(inv.Items[:idx], inv.Items[idx+1:]...)
+					if oldItem != "" {
+						inv.Items = append(inv.Items, oldItem)
+					}
+					player.LogMsg = fmt.Sprintf("Equipped %s.", itemName)
+				} else {
+					player.LogMsg = "Unknown item."
+				}
+			}
+			continue
+		}
+
+		if strings.HasPrefix(cmd, "unequip ") {
+			slot := strings.TrimPrefix(cmd, "unequip ")
+			eq := w.Equipment[entity]
+			inv := w.Inventories[entity]
+			if slot == "weapon" && eq.Weapon != "" {
+				inv.Items = append(inv.Items, eq.Weapon)
+				player.LogMsg = fmt.Sprintf("Unequipped %s.", eq.Weapon)
+				eq.Weapon = ""
+			} else if slot == "armor" && eq.Armor != "" {
+				inv.Items = append(inv.Items, eq.Armor)
+				player.LogMsg = fmt.Sprintf("Unequipped %s.", eq.Armor)
+				eq.Armor = ""
+			} else {
+				player.LogMsg = strings.TrimSpace(fmt.Sprintf("Nothing equipped in %s slot.", slot))
+			}
+			continue
+		}
 
 		switch cmd {
 		case "w": newY--
@@ -47,7 +118,7 @@ func ProcessCommands(w *World) {
 			itemFound := false
 			for e, loot := range w.Loot {
 				lPos := w.Positions[e]
-				if lPos.X == pos.X && lPos.Y == pos.Y && lPos.Z == pos.Z {
+				if lPos != nil && lPos.X == pos.X && lPos.Y == pos.Y && lPos.Z == pos.Z {
 					w.Inventories[entity].Items = append(w.Inventories[entity].Items, loot.Items...)
 					source := "bag"
 					if rnd, ok := w.Renderables[e]; ok && rnd.Char == 'C' { source = "chest" }
@@ -85,8 +156,10 @@ func ProcessCommands(w *World) {
 		bumpedEntity := Entity(0)
 		for e, ePos := range w.Positions {
 			if ePos.X == newX && ePos.Y == newY && ePos.Z == pos.Z && e != entity {
-				bumpedEntity = e
-				break
+				if _, isLoot := w.Loot[e]; !isLoot {
+					bumpedEntity = e
+					break
+				}
 			}
 		}
 
@@ -152,7 +225,24 @@ func ProcessCombat(w *World) {
 		}
 
 		attStats := w.Stats[attacker]
-		damage := rand.Intn(attStats.Attack + 1)
+		
+		totalAttack := attStats.Attack
+		if eq, hasEq := w.Equipment[attacker]; hasEq && eq.Weapon != "" {
+			if def, exists := ItemRegistry[eq.Weapon]; exists {
+				totalAttack += def.AttackBonus
+			}
+		}
+		damage := rand.Intn(totalAttack + 1)
+		
+		totalDefense := targetStats.Defense
+		if teq, hasTeq := w.Equipment[state.Target]; hasTeq && teq.Armor != "" {
+			if def, exists := ItemRegistry[teq.Armor]; exists {
+				totalDefense += def.DefenseBonus
+			}
+		}
+		damage -= totalDefense
+		if damage < 0 { damage = 0 }
+		
 		targetStats.HP -= damage
 
 		// Combat Logs
@@ -184,8 +274,21 @@ func handleDeath(w *World, victim Entity) {
 	if p, isPlayer := w.Players[victim]; isPlayer {
 		p.LogMsg = "Oh dear, you are dead!"
 		
-		// 50% Drop Logic
 		inv := w.Inventories[victim]
+		
+		// Force unequip everything into inventory so it has a 50% chance to drop!
+		if eq, hasEq := w.Equipment[victim]; hasEq {
+			if eq.Weapon != "" {
+				inv.Items = append(inv.Items, eq.Weapon)
+				eq.Weapon = ""
+			}
+			if eq.Armor != "" {
+				inv.Items = append(inv.Items, eq.Armor)
+				eq.Armor = ""
+			}
+		}
+
+		// 50% Drop Logic
 		if len(inv.Items) > 0 {
 			rand.Shuffle(len(inv.Items), func(i, j int) { inv.Items[i], inv.Items[j] = inv.Items[j], inv.Items[i] })
 			dropCount := (len(inv.Items) + 1) / 2
@@ -257,7 +360,14 @@ func RenderViewport(w *World) {
 		for i, item := range inv.Items {
 			invStr.WriteString(fmt.Sprintf("[%d]%s ", i, item))
 		}
+		eq := w.Equipment[entity]
+		wStr, aStr := "None", "None"
+		if eq != nil {
+			if eq.Weapon != "" { wStr = eq.Weapon }
+			if eq.Armor != "" { aStr = eq.Armor }
+		}
 		sb.WriteString(fmt.Sprintf("HP: %d/%d | Depth: %d | Inv: %s\033[K\r\n", stats.HP, stats.MaxHP, pPos.Z, strings.TrimSpace(invStr.String())))
+		sb.WriteString(fmt.Sprintf("Equipped: W: %s | A: %s\033[K\r\n", wStr, aStr))
 		sb.WriteString(fmt.Sprintf("Log: %s\033[K\r\n", player.LogMsg))
 		sb.WriteString("\0338")
 		player.Conn.Write([]byte(sb.String()))

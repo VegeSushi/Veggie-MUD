@@ -25,6 +25,11 @@ type Inventory struct {
 	Items []string 
 }
 
+type Equipment struct {
+	Weapon string
+	Armor  string
+}
+
 // Loot represents items sitting on the ground (Chests or Bags)
 type Loot struct {
 	Items []string
@@ -42,6 +47,7 @@ type World struct {
 	Stats       map[Entity]*CombatStats
 	Combat      map[Entity]*CombatState
 	Inventories map[Entity]*Inventory
+	Equipment   map[Entity]*Equipment
 	Loot        map[Entity]*Loot // Added this back
 	Levels      map[int]map[string]rune
 	DB          *sql.DB
@@ -56,6 +62,7 @@ func NewWorld(db *sql.DB) *World {
 		Stats:       make(map[Entity]*CombatStats),
 		Combat:      make(map[Entity]*CombatState),
 		Inventories: make(map[Entity]*Inventory),
+		Equipment:   make(map[Entity]*Equipment),
 		Loot:        make(map[Entity]*Loot), // Initialized
 		Levels:      make(map[int]map[string]rune),
 		DB:          db,
