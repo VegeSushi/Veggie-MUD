@@ -23,6 +23,7 @@ type CombatState struct {
 }
 type Inventory struct {
 	Items []string 
+	Coins int
 }
 
 type Equipment struct {
@@ -33,6 +34,7 @@ type Equipment struct {
 // Loot represents items sitting on the ground (Chests or Bags)
 type Loot struct {
 	Items []string
+	Coins int
 }
 
 // --- The World (ECS Manager) ---

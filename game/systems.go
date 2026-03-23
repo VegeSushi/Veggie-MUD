@@ -120,9 +120,17 @@ func ProcessCommands(w *World) {
 				lPos := w.Positions[e]
 				if lPos != nil && lPos.X == pos.X && lPos.Y == pos.Y && lPos.Z == pos.Z {
 					w.Inventories[entity].Items = append(w.Inventories[entity].Items, loot.Items...)
+					w.Inventories[entity].Coins += loot.Coins
 					source := "bag"
 					if rnd, ok := w.Renderables[e]; ok && rnd.Char == 'C' { source = "chest" }
-					player.LogMsg = fmt.Sprintf("Looted %s: %s", source, strings.Join(loot.Items, ", "))
+					msg := fmt.Sprintf("Looted %s", source)
+					if len(loot.Items) > 0 {
+						msg += fmt.Sprintf(": %s", strings.Join(loot.Items, ", "))
+					}
+					if loot.Coins > 0 {
+						msg += fmt.Sprintf(" (+%d coins)", loot.Coins)
+					}
+					player.LogMsg = strings.TrimSpace(msg)
 					// Clean up the chest/bag entity
 					delete(w.Positions, e)
 					delete(w.Renderables, e)
@@ -289,16 +297,24 @@ func handleDeath(w *World, victim Entity) {
 		}
 
 		// 50% Drop Logic
-		if len(inv.Items) > 0 {
-			rand.Shuffle(len(inv.Items), func(i, j int) { inv.Items[i], inv.Items[j] = inv.Items[j], inv.Items[i] })
-			dropCount := (len(inv.Items) + 1) / 2
-			dropped := inv.Items[:dropCount]
-			w.Inventories[victim].Items = inv.Items[dropCount:]
+		if len(inv.Items) > 0 || inv.Coins > 0 {
+			droppedCoins := inv.Coins / 2
+			inv.Coins -= droppedCoins
+			
+			var dropped []string
+			if len(inv.Items) > 0 {
+				rand.Shuffle(len(inv.Items), func(i, j int) { inv.Items[i], inv.Items[j] = inv.Items[j], inv.Items[i] })
+				dropCount := (len(inv.Items) + 1) / 2
+				dropped = inv.Items[:dropCount]
+				w.Inventories[victim].Items = inv.Items[dropCount:]
+			}
 
-			bag := w.CreateEntity()
-			w.Positions[bag] = &Position{X: pos.X, Y: pos.Y, Z: pos.Z}
-			w.Renderables[bag] = &Renderable{Char: 'b'}
-			w.Loot[bag] = &Loot{Items: dropped}
+			if len(dropped) > 0 || droppedCoins > 0 {
+				bag := w.CreateEntity()
+				w.Positions[bag] = &Position{X: pos.X, Y: pos.Y, Z: pos.Z}
+				w.Renderables[bag] = &Renderable{Char: 'b'}
+				w.Loot[bag] = &Loot{Items: dropped, Coins: droppedCoins}
+			}
 		}
 
 		// Respawn
@@ -307,11 +323,11 @@ func handleDeath(w *World, victim Entity) {
 		pos.Z = 0
 	} else {
 		// NPC Death
-		if inv, hasInv := w.Inventories[victim]; hasInv && len(inv.Items) > 0 {
+		if inv, hasInv := w.Inventories[victim]; hasInv && (len(inv.Items) > 0 || inv.Coins > 0) {
 			bag := w.CreateEntity()
 			w.Positions[bag] = &Position{X: pos.X, Y: pos.Y, Z: pos.Z}
 			w.Renderables[bag] = &Renderable{Char: 'b'}
-			w.Loot[bag] = &Loot{Items: inv.Items}
+			w.Loot[bag] = &Loot{Items: inv.Items, Coins: inv.Coins}
 		}
 
 		delete(w.Positions, victim)
@@ -366,7 +382,7 @@ func RenderViewport(w *World) {
 			if eq.Weapon != "" { wStr = eq.Weapon }
 			if eq.Armor != "" { aStr = eq.Armor }
 		}
-		sb.WriteString(fmt.Sprintf("HP: %d/%d | Depth: %d | Inv: %s\033[K\r\n", stats.HP, stats.MaxHP, pPos.Z, strings.TrimSpace(invStr.String())))
+		sb.WriteString(fmt.Sprintf("HP: %d/%d | Depth: %d | Coins: %d | Inv: %s\033[K\r\n", stats.HP, stats.MaxHP, pPos.Z, inv.Coins, strings.TrimSpace(invStr.String())))
 		sb.WriteString(fmt.Sprintf("Equipped: W: %s | A: %s\033[K\r\n", wStr, aStr))
 		sb.WriteString(fmt.Sprintf("Log: %s\033[K\r\n", player.LogMsg))
 		sb.WriteString("\0338")

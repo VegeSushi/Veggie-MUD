@@ -56,7 +56,7 @@ func PopulateLevel(w *World, z int) {
 		entity := w.CreateEntity()
 		w.Positions[entity] = &Position{X: x, Y: y, Z: z}
 		w.Renderables[entity] = &Renderable{Char: 'C'}
-		w.Loot[entity] = &Loot{Items: []string{RandomLoot()}}
+		w.Loot[entity] = &Loot{Items: []string{RandomLoot()}, Coins: rand.Intn(15) + 5}
 	}
 	// Goblins will be handled by the SpawnSystem in the main loop
 }

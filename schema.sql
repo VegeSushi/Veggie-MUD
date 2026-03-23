@@ -12,7 +12,8 @@ CREATE TABLE IF NOT EXISTS players (
     max_hp INT DEFAULT 10,
     inventory TEXT DEFAULT '[]',
     weapon VARCHAR(255) DEFAULT '',
-    armor VARCHAR(255) DEFAULT ''
+    armor VARCHAR(255) DEFAULT '',
+    coins INT DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS levels (

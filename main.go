@@ -44,6 +44,7 @@ func main() {
 	db.Exec("ALTER TABLE players ADD COLUMN inventory TEXT DEFAULT '[]'")
 	db.Exec("ALTER TABLE players ADD COLUMN weapon VARCHAR(255) DEFAULT ''")
 	db.Exec("ALTER TABLE players ADD COLUMN armor VARCHAR(255) DEFAULT ''")
+	db.Exec("ALTER TABLE players ADD COLUMN coins INT DEFAULT 0")
 
 	world := game.NewWorld(db)
 	var mu sync.Mutex
@@ -102,7 +103,7 @@ func handleConnection(conn net.Conn, w *game.World, mu *sync.Mutex) {
 				if stats, hasStats := w.Stats[playerEntity]; hasStats {
 					invJSON, _ := json.Marshal(w.Inventories[playerEntity].Items)
 					eq := w.Equipment[playerEntity]
-					w.DB.Exec("UPDATE players SET x=?, y=?, z=?, hp=?, max_hp=?, inventory=?, weapon=?, armor=? WHERE id=?", pPos.X, pPos.Y, pPos.Z, stats.HP, stats.MaxHP, string(invJSON), eq.Weapon, eq.Armor, w.Players[playerEntity].DB_ID)
+					w.DB.Exec("UPDATE players SET x=?, y=?, z=?, hp=?, max_hp=?, inventory=?, weapon=?, armor=?, coins=? WHERE id=?", pPos.X, pPos.Y, pPos.Z, stats.HP, stats.MaxHP, string(invJSON), eq.Weapon, eq.Armor, w.Inventories[playerEntity].Coins, w.Players[playerEntity].DB_ID)
 				} else {
 					// Fallback just in case stats didn't load
 					w.DB.Exec("UPDATE players SET x=?, y=?, z=? WHERE id=?", pPos.X, pPos.Y, pPos.Z, w.Players[playerEntity].DB_ID)
@@ -163,11 +164,11 @@ func handleConnection(conn net.Conn, w *game.World, mu *sync.Mutex) {
 			}
 
 		case "AWAITING_PASS":
-			var id, x, y, z, hp, max_hp int
+			var id, x, y, z, hp, max_hp, coins int
 			var storedHash, invJSON, weapon, armor string
 			
 			// Fetch the stored hash, position, and health
-			err := w.DB.QueryRow("SELECT id, password, x, y, z, hp, max_hp, COALESCE(inventory, '[]'), COALESCE(weapon, ''), COALESCE(armor, '') FROM players WHERE username=?", username).Scan(&id, &storedHash, &x, &y, &z, &hp, &max_hp, &invJSON, &weapon, &armor)
+			err := w.DB.QueryRow("SELECT id, password, x, y, z, hp, max_hp, COALESCE(inventory, '[]'), COALESCE(weapon, ''), COALESCE(armor, ''), COALESCE(coins, 0) FROM players WHERE username=?", username).Scan(&id, &storedHash, &x, &y, &z, &hp, &max_hp, &invJSON, &weapon, &armor, &coins)
 			
 			if err != nil {
 				conn.Write([]byte("User not found. Enter username:\r\n> "))
@@ -194,7 +195,7 @@ func handleConnection(conn net.Conn, w *game.World, mu *sync.Mutex) {
 					// Assign Combat and Inventory components
 					w.Stats[playerEntity] = &game.CombatStats{HP: hp, MaxHP: max_hp, Attack: 3, Defense: 1}
 					w.Combat[playerEntity] = &game.CombatState{}
-					w.Inventories[playerEntity] = &game.Inventory{Items: []string{}}
+					w.Inventories[playerEntity] = &game.Inventory{Items: []string{}, Coins: coins}
 					json.Unmarshal([]byte(invJSON), &w.Inventories[playerEntity].Items)
 					w.Equipment[playerEntity] = &game.Equipment{Weapon: weapon, Armor: armor}
 					

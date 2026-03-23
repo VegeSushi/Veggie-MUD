@@ -1,6 +1,9 @@
 package content
 
-import "veggie-mud/game"
+import (
+	"math/rand"
+	"veggie-mud/game"
+)
 
 func init() {
 	game.RegisterNPC("Goblin", func(w *game.World, x, y, z int) game.Entity {
@@ -11,7 +14,7 @@ func init() {
 		// Goblin Stats: 7 HP, hits up to 2
 		w.Stats[entity] = &game.CombatStats{HP: 7, MaxHP: 7, Attack: 2, Defense: 1}
 		w.Combat[entity] = &game.CombatState{}
-		w.Inventories[entity] = &game.Inventory{Items: []string{game.RandomLoot()}}
+		w.Inventories[entity] = &game.Inventory{Items: []string{game.RandomLoot()}, Coins: rand.Intn(5) + 1}
 		
 		return entity
 	})
